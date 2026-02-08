@@ -170,13 +170,11 @@ grimmer_scalar <- function(
   for (ii in seq_along(x_real_possible)) {
     x_real <- x_real_possible[ii]
     sum_real <- x_real * n_items
-    cat(x_real,"\n")
     
 
     # Sum of squares bounds, lower and upper:
     sum_squares_lower <- ((n - 1) * sd_lower^2 + n * x_real^2) * items^2
     sum_squares_upper <- ((n - 1) * sd_upper^2 + n * x_real^2) * items^2
-    cat(sum_squares_lower, sum_squares_upper, "\n")
 
     # TEST 1: Check that there is at least one integer between the lower and upper
     # bounds (of the reconstructed sum of squares of the -- most likely unknown --
@@ -255,7 +253,7 @@ grimmer_scalar <- function(
   }
   # convert test1_results, test2_results, test3_results to a dataframe of 3 rows (test1, test2, test3) and length(x_real_possible) columns
   test_results <- rbind(test1_results, test2_results, test3_results)
-  print(test_results)
+
   # if any of the columns has all TRUE values, then the inputs are GRIMMER-consistent
   pass3 <- apply(test_results, 2, function(x) all(x))
   if (any(pass3)) {
