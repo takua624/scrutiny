@@ -95,30 +95,21 @@ grimmer_scalar <- function(
   check_type(x, "character")
   check_type(sd, "character")
 
-  # Provisional warning about the test 3 false-positive bug
-  cli::cli_warn(c(
-    "False-positive GRIMMER results possible.",
-    "!" = "I became aware of a bug in the `grimmer*()` functions.",
-    "x" = "GRIMMER's test 3 can flag consistent values as inconsistent.",
-    "x" = "For now, please use `show_reason = TRUE` and interpret results \
-      of test 3 with care. (The first two tests and GRIM are not affected.)",
-    "i" = "The next version of scrutiny will provide a fix. Many apologies.",
-    "i" = "For more information, see \
-    {.url https://github.com/lhdjung/scrutiny/issues/80}"
-  ))
-
-  digits_sd <- decimal_places_scalar(sd)
+  # # Provisional warning about the test 3 false-positive bug
+  # cli::cli_warn(c(
+  #   "False-positive GRIMMER results possible.",
+  #   "!" = "I became aware of a bug in the `grimmer*()` functions.",
+  #   "x" = "GRIMMER's test 3 can flag consistent values as inconsistent.",
+  #   "x" = "For now, please use `show_reason = TRUE` and interpret results \
+  #     of test 3 with care. (The first two tests and GRIM are not affected.)",
+  #   "i" = "The next version of scrutiny will provide a fix. Many apologies.",
+  #   "i" = "For more information, see \
+  #   {.url https://github.com/lhdjung/scrutiny/issues/80}"
+  # ))
 
   x_orig <- x
-  x <- as.numeric(x)
-  sd <- as.numeric(sd)
 
-  n_items <- n * items
-
-  sum <- x * n_items
-  sum_real <- round(sum)
-  x_real <- sum_real / n_items
-
+  # put GRIM TEST forward, since it doesn't require any of the variables computed for GRIMMER
   # GRIM TEST: It says `x_orig` because the `x` object has been coerced from
   # character to numeric, but `grim_scalar()` needs the original number-string.
   # Similarly, since this function also gets `items` passed down, it needs the
@@ -140,111 +131,164 @@ grimmer_scalar <- function(
     return(FALSE)
   }
 
+  digits_x <- decimal_places_scalar(x)
+  digits_sd <- decimal_places_scalar(sd)
+  x <- as.numeric(x)
+  sd <- as.numeric(sd)
+
+  n_items <- n * items
+
+  p10x <- 10^(digits_x + 1)
+  p10x_frac <- 5 / p10x
+  # x (mean) bounds, lower and upper:
+  if (x < p10x_frac) {
+    x_lower <- 0
+  } else {
+    x_lower <- x - p10x_frac
+  }
+  x_upper <- x + p10x_frac
+
   p10 <- 10^(digits_sd + 1)
   p10_frac <- 5 / p10
-
   # SD bounds, lower and upper:
   if (sd < p10_frac) {
     sd_lower <- 0
   } else {
     sd_lower <- sd - p10_frac
   }
-
   sd_upper <- sd + p10_frac
 
-  # Sum of squares bounds, lower and upper:
-  sum_squares_lower <- ((n - 1) * sd_lower^2 + n * x_real^2) * items^2
-  sum_squares_upper <- ((n - 1) * sd_upper^2 + n * x_real^2) * items^2
+  # create a vector of all possible integers between the lower and upper bounds of the sum:
+  sum_lower <- x_lower * n_items
+  sum_upper <- x_upper * n_items
+  sum_possible <- round(sum_lower):round(sum_upper)
+  x_real_possible <- sum_possible / n_items
 
-  # TEST 1: Check that there is at least one integer between the lower and upper
-  # bounds (of the reconstructed sum of squares of the -- most likely unknown --
-  # values for which `x` was reported as a mean). Ceiling the lower bound and
-  # flooring the upper bound determines whether there are any integers between
-  # the two. For example:
-  # -- If `sum_squares_lower` is 112.869 and `sum_squares_upper` is 113.1156,
-  # `ceiling(sum_squares_lower)` and `floor(sum_squares_upper)` both return
-  # `113`, so there is an integer between them, and `<=` returns `TRUE`.
-  # -- TODO: add an example where there is no integer in between; and thus,
-  # `pass_test1` is `FALSE`.
-  pass_test1 <- ceiling(sum_squares_lower) <= floor(sum_squares_upper)
+  test1_results <- logical(length(x_real_possible))
+  test2_results <- logical(length(x_real_possible))
+  test3_results <- logical(length(x_real_possible))
+  for (ii in seq_along(x_real_possible)) {
+    x_real <- x_real_possible[ii]
+    sum_real <- x_real * n_items
+    cat(x_real,"\n")
+    
 
-  if (!pass_test1) {
-    if (show_reason) {
-      return(list(FALSE, "GRIMMER inconsistent (test 1)"))
+    # Sum of squares bounds, lower and upper:
+    sum_squares_lower <- ((n - 1) * sd_lower^2 + n * x_real^2) * items^2
+    sum_squares_upper <- ((n - 1) * sd_upper^2 + n * x_real^2) * items^2
+    cat(sum_squares_lower, sum_squares_upper, "\n")
+
+    # TEST 1: Check that there is at least one integer between the lower and upper
+    # bounds (of the reconstructed sum of squares of the -- most likely unknown --
+    # values for which `x` was reported as a mean). Ceiling the lower bound and
+    # flooring the upper bound determines whether there are any integers between
+    # the two. For example:
+    # -- If `sum_squares_lower` is 112.869 and `sum_squares_upper` is 113.1156,
+    # `ceiling(sum_squares_lower)` and `floor(sum_squares_upper)` both return
+    # `113`, so there is an integer between them, and `<=` returns `TRUE`.
+    # -- TODO: add an example where there is no integer in between; and thus,
+    # `pass_test1` is `FALSE`.
+    test1_results[ii] <- ceiling(sum_squares_lower) <= floor(sum_squares_upper)
+    # if test1_results[ii] is FALSE, no need to run the rest of the tests, fill test2_results[ii] and test3_results[ii] with FALSE and continue to the next iteration of the loop
+    if (!test1_results[ii]) {
+      test2_results[ii] <- FALSE
+      test3_results[ii] <- FALSE
+      next
     }
-    return(FALSE)
-  }
+    
 
-  # Create a vector of all possible integers between the lower and upper bounds
-  # of the sum of squares:
-  integers_possible <- ceiling(sum_squares_lower):floor(sum_squares_upper)
+    # Create a vector of all possible integers between the lower and upper bounds
+    # of the sum of squares:
+    integers_possible <- ceiling(sum_squares_lower):floor(sum_squares_upper)
 
-  # Create the predicted variance and SD:
-  var_predicted <- (integers_possible / items^2 - n * x_real^2) / (n - 1)
-  sd_predicted <- sqrt(var_predicted)
+    # Create the predicted variance and SD:
+    var_predicted <- (integers_possible / items^2 - n * x_real^2) / (n - 1)
+    sd_predicted <- sqrt(var_predicted)
 
-  # Reconstruct the SD:
-  sd_rec_rounded <- reround(
-    x = sd_predicted,
-    digits = digits_sd,
-    rounding = rounding,
-    threshold = threshold,
-    symmetric = symmetric
-  )
+    # Reconstruct the SD:
+    sd_rec_rounded <- reround(
+      x = sd_predicted,
+      digits = digits_sd,
+      rounding = rounding,
+      threshold = threshold,
+      symmetric = symmetric
+    )
 
-  # Introduce a small numeric tolerance to the reported and reconstructed SD
-  # values before comparing them. This helps avoid false-negative results of the
-  # comparison (i.e., treating equal values as unequal) that might occur due to
-  # spurious precision in floating-point numbers.
-  sd <- dustify(sd)
-  sd_rec_rounded <- dustify(sd_rec_rounded)
+    # Introduce a small numeric tolerance to the reported and reconstructed SD
+    # values before comparing them. This helps avoid false-negative results of the
+    # comparison (i.e., treating equal values as unequal) that might occur due to
+    # spurious precision in floating-point numbers.
+    sd <- dustify(sd)
+    sd_rec_rounded <- dustify(sd_rec_rounded)
 
-  # Check the reported SD for near-equality with the reconstructed SD values;
-  # i.e., equality within a very small tolerance. This test is applied via
-  # `purrr::map_lgl()` because `dustify()` doubled the length of both vectors.
-  matches_sd <- purrr::map_lgl(
-    .x = sd,
-    .f = function(x) any(dplyr::near(x, sd_rec_rounded, tol = tolerance))
-  )
+    # Check the reported SD for near-equality with the reconstructed SD values;
+    # i.e., equality within a very small tolerance. This test is applied via
+    # `purrr::map_lgl()` because `dustify()` doubled the length of both vectors.
+    matches_sd <- purrr::map_lgl(
+      .x = sd,
+      .f = function(x) any(dplyr::near(x, sd_rec_rounded, tol = tolerance))
+    )
 
-  # TEST 2: If none of the reconstructed SDs matches the reported one, the
-  # inputs are GRIMMER-inconsistent.
-  pass_test2 <- any(matches_sd[!is.na(matches_sd)])
-
-  if (!pass_test2) {
-    if (show_reason) {
-      return(list(FALSE, "GRIMMER inconsistent (test 2)"))
+    # TEST 2: If none of the reconstructed SDs matches the reported one, the
+    # inputs are GRIMMER-inconsistent.
+    test2_results[ii] <- any(matches_sd[!is.na(matches_sd)])
+    # if test2_results[ii] is FALSE, no need to run test 3, fill test3_results[ii] with FALSE and continue to the next iteration of the loop
+    if (!test2_results[ii]) {
+      test3_results[ii] <- FALSE
+      next
     }
-    return(FALSE)
+    
+
+    # Determine if any integer between the lower and upper bounds has the same
+    # parity (i.e., the property of being even or odd) as the reconstructed sum:
+    matches_parity <- sum_real %% 2 == integers_possible %% 2
+
+    matches_sd_and_parity <- purrr::map_lgl(
+      .x = matches_parity,
+      .f = function(x) any(x & matches_sd)
+    )
+
+    # TEST 3: At least one none of the reconstructed SDs has to match the reported
+    # one, and the corresponding reconstructed sums have to match in parity.
+    test3_results[ii] <- any(matches_sd_and_parity)
+
   }
-
-  # Determine if any integer between the lower and upper bounds has the same
-  # parity (i.e., the property of being even or odd) as the reconstructed sum:
-  matches_parity <- sum_real %% 2 == integers_possible %% 2
-
-  matches_sd_and_parity <- purrr::map_lgl(
-    .x = matches_parity,
-    .f = function(x) any(x & matches_sd)
-  )
-
-  # TEST 3: At least one none of the reconstructed SDs has to match the reported
-  # one, and the corresponding reconstructed sums have to match in parity.
-  pass_test3 <- any(matches_sd_and_parity)
-
-  if (!pass_test3) {
+  # convert test1_results, test2_results, test3_results to a dataframe of 3 rows (test1, test2, test3) and length(x_real_possible) columns
+  test_results <- rbind(test1_results, test2_results, test3_results)
+  print(test_results)
+  # if any of the columns has all TRUE values, then the inputs are GRIMMER-consistent
+  pass3 <- apply(test_results, 2, function(x) all(x))
+  if (any(pass3)) {
+    if (show_reason) {
+      return(list(TRUE, "Passed all"))
+      } 
+      return(TRUE)
+  }
+  # if we get here, it means that there is no column with all TRUE values, so the inputs are GRIMMER-inconsistent. We can check which test(s) failed.
+  # if the best column has test 1 and test 2 as TRUE, but not test 3, then the inputs are GRIMMER-inconsistent because of test 3.
+  pass2 <- apply(test_results, 2, function(x) x[1] && x[2] && !x[3])
+  if (any(pass2)) {
     if (show_reason) {
       return(list(FALSE, "GRIMMER inconsistent (test 3)"))
     }
     return(FALSE)
   }
-
-  # All the tests were passed if the algorithm reaches this point, so the inputs
-  # are GRIMMER-consistent:
-  if (show_reason) {
-    list(TRUE, "Passed all")
-  } else {
-    TRUE
+  # If the best column has only test 1 as TRUE, but not test 2 (we don't care about test 3 in this case), then the inputs are GRIMMER-inconsistent because of test 2.
+  pass1 <- apply(test_results, 2, function(x) x[1] && !x[2])
+  if (any(pass1)) {
+    if (show_reason) {
+      return(list(FALSE, "GRIMMER inconsistent (test 2)"))
+    }
+    return(FALSE)
   }
+  # if we get here, it means that there isn't any column with 3 TRUEs
+  # there isn't any column with test 1 and test 2 as TRUE
+  # there isn't any column with only test 1 as TRUE
+  # all the columns have test 1 as FALSE, we can conclude that the inputs are GRIMMER-inconsistent because of test 1.
+  if (show_reason) {
+    return(list(FALSE, "GRIMMER inconsistent (test 1)"))
+  }
+  return(FALSE)
 }
 
 
